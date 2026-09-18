@@ -581,24 +581,43 @@ This service is container-ready and follows 12-factor application design princip
 - When running behind a reverse proxy or Cloud Run with SSL termination, configure `FRONTEND_URL` to your production frontend origin to ensure `SameSite=None; Secure` cookies are accepted by browsers.
 
 ### Example Dockerfile
-```dockerfile
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY . .
-RUN npm run build
+The repository includes a production [`Dockerfile`](./Dockerfile) and [`.dockerignore`](./.dockerignore). Build and run it locally:
 
-FROM node:20-alpine AS runner
-WORKDIR /app
-ENV NODE_ENV=production
-COPY package*.json ./
-RUN npm ci --omit=dev
-COPY --from=builder /app/dist ./dist
-
-EXPOSE 8080
-CMD ["node", "dist/server.js"]
+```bash
+docker build -t games-backend .
+docker run --rm -p 8080:8080 \
+  -e NODE_ENV=production \
+  -e FRONTEND_URL=http://localhost:3000 \
+  games-backend
 ```
+
+Cloud Run deployment using Artifact Registry:
+
+```bash
+PROJECT_ID="$(gcloud config get-value project)"
+REGION="us-central1"
+REPOSITORY="games"
+IMAGE="${REGION}-docker.pkg.dev/${PROJECT_ID}/${REPOSITORY}/games-backend"
+
+gcloud artifacts repositories create "${REPOSITORY}" \
+  --repository-format=docker \
+  --location="${REGION}" \
+  --project="${PROJECT_ID}"
+
+gcloud builds submit --tag "${IMAGE}" .
+gcloud run deploy games-backend \
+  --image "${IMAGE}" \
+  --region "${REGION}" \
+  --platform managed \
+  --allow-unauthenticated \
+  --max 1 \
+  --timeout 3600 \
+  --set-env-vars NODE_ENV=production,FRONTEND_URL=https://your-frontend.example.com
+```
+
+Cloud Run sets `PORT` automatically; do not hard-code it in the deployment command. Set `FRONTEND_URL` to the exact HTTPS origin used by the frontend so credentialed CORS and secure session cookies work.
+
+The game state and sessions are stored in process memory. For reliable multiplayer behavior, deploy with a single instance (`--max 1`) or add shared state storage and Socket.IO adapter support before scaling horizontally.
 
 ---
 
