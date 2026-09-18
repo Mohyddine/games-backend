@@ -1,0 +1,733 @@
+{
+  "info": {
+    "_postman_id": "7bf3df8c-2f95-46aa-9dc7-6efaeefb21a3",
+    "name": "Tic-Tac-Toe Real-Time Game API",
+    "description": "Comprehensive Postman collection for testing the authoritative 1-vs-1 Tic-Tac-Toe backend API.\n\n### Authentication\nAuthentication is handled via the HTTP-only cookie `tic_tac_toe_session`. Postman automatically stores and passes cookies back on subsequent requests when executing `POST /api/v1/session`.\n\n### Room Lifecycle & Socket Integration\n1. **Room Creation / Joining (REST)**:\n   - `POST /api/v1/rooms` creates a room (Player 1).\n   - `POST /api/v1/rooms/:code/join` adds Player 2 to the room and starts the 3-second countdown.\n2. **Socket.IO Real-Time Channel**:\n   - Sockets authenticate via the `tic_tac_toe_session` cookie during the handshake.\n   - Client emits `room:join` with `{ \"code\": \"...\" }` to associate the socket connection with their room channel and restore state (this does not add a new player).\n   - Real-time game interactions (moves, 30s turn timer, 60s reconnect grace, 30s rematch request expiration) use Socket.IO events as documented in README.md.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Health Check",
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": {
+          "raw": "{{baseUrl}}/",
+          "host": [
+            "{{baseUrl}}"
+          ],
+          "path": [
+            ""
+          ]
+        },
+        "description": "Health check endpoint returning service status, name, and version."
+      },
+      "response": [
+        {
+          "name": "Health Check - OK",
+          "originalRequest": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                ""
+              ]
+            }
+          },
+          "status": "OK",
+          "code": 200,
+          "_postman_previewlanguage": "json",
+          "header": [
+            {
+              "key": "Content-Type",
+              "value": "application/json; charset=utf-8"
+            }
+          ],
+          "cookie": [],
+          "body": "{\n  \"status\": \"ok\",\n  \"service\": \"tic-tac-toe-api\",\n  \"version\": \"1.0.0\"\n}"
+        }
+      ]
+    },
+    {
+      "name": "Session",
+      "description": "Endpoints for player session initialization and restoration.",
+      "item": [
+        {
+          "name": "Create or Restore Session",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 200 or 201\", function () {",
+                  "    pm.expect(pm.response.code).to.be.oneOf([200, 201]);",
+                  "});",
+                  "",
+                  "pm.test(\"Response has success envelope\", function () {",
+                  "    var jsonData = pm.response.json();",
+                  "    pm.expect(jsonData.success).to.eql(true);",
+                  "    pm.expect(jsonData.data).to.have.property('playerId');",
+                  "    pm.expect(jsonData.data).to.have.property('name');",
+                  "});"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Mohyddine\"\n}"
+            },
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/session",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "session"
+              ]
+            },
+            "description": "Creates a new player session or restores an existing one if the `tic_tac_toe_session` cookie is present.\n\n- **Request body is optional**.\n- If `name` is omitted, an automatic name format like `Player0042` will be assigned.\n- Sets the `tic_tac_toe_session` HTTP-only cookie."
+          },
+          "response": [
+            {
+              "name": "Session Created (201)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Mohyddine\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                },
+                {
+                  "key": "Set-Cookie",
+                  "value": "tic_tac_toe_session=269229fc-d88b-4a57-b08e-ee51b32d0c2e; Path=/; HttpOnly; SameSite=Lax"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"status_code\": 201,\n  \"message\": \"Session created.\",\n  \"error\": false,\n  \"error_code\": null,\n  \"data\": {\n    \"playerId\": \"4f9d2242-b91c-43fe-a86d-66e85d9980d2\",\n    \"name\": \"Mohyddine\"\n  }\n}"
+            },
+            {
+              "name": "Session Restored (200)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "session"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"status_code\": 200,\n  \"message\": \"Session restored.\",\n  \"error\": false,\n  \"error_code\": null,\n  \"data\": {\n    \"playerId\": \"4f9d2242-b91c-43fe-a86d-66e85d9980d2\",\n    \"name\": \"Mohyddine\"\n  }\n}"
+            },
+            {
+              "name": "Invalid Name Validation Error (400)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"!\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/session",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "session"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"status_code\": 400,\n  \"message\": \"Name must be between 2 and 20 characters.\",\n  \"error\": true,\n  \"error_code\": \"INVALID_NAME\",\n  \"data\": null\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Rooms",
+      "description": "Endpoints to manage game rooms.",
+      "item": [
+        {
+          "name": "Create Room",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "exec": [
+                  "pm.test(\"Status code is 201\", function () {",
+                  "    pm.expect(pm.response.code).to.eql(201);",
+                  "});",
+                  "",
+                  "var jsonData = pm.response.json();",
+                  "if (jsonData.success && jsonData.data && jsonData.data.code) {",
+                  "    pm.collectionVariables.set(\"roomCode\", jsonData.data.code);",
+                  "    console.log(\"Saved roomCode: \" + jsonData.data.code);",
+                  "}"
+                ],
+                "type": "text/javascript"
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rooms",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "rooms"
+              ]
+            },
+            "description": "Creates a new game room. The creator is registered as Player 1, and the room code (5 uppercase characters excluding O, 0, I, 1) is automatically saved to the collection variable `{{roomCode}}`."
+          },
+          "response": [
+            {
+              "name": "Room Created Successfully",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms"
+                  ]
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"status_code\": 201,\n  \"message\": \"Room created successfully.\",\n  \"error\": false,\n  \"error_code\": null,\n  \"data\": {\n    \"code\": \"KM7PX\",\n    \"gameStatus\": \"WAITING\"\n  }\n}"
+            },
+            {
+              "name": "Unauthorized (Missing Session Cookie)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"status_code\": 401,\n  \"message\": \"Session required. Please create or restore a session.\",\n  \"error\": true,\n  \"error_code\": \"UNAUTHORIZED\",\n  \"data\": null\n}"
+            },
+            {
+              "name": "Session Expired or Invalid (401)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms"
+                  ]
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"status_code\": 401,\n  \"message\": \"Session expired or invalid.\",\n  \"error\": true,\n  \"error_code\": \"SESSION_EXPIRED\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Join Room",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rooms/{{roomCode}}/join",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "rooms",
+                "{{roomCode}}",
+                "join"
+              ]
+            },
+            "description": "Joins an existing room specified by `{{roomCode}}`. Once Player 2 joins, the game status transitions to `COUNTDOWN`, assigning symbols randomly."
+          },
+          "response": [
+            {
+              "name": "Room Joined Successfully",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms/KM7PX/join",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms",
+                    "KM7PX",
+                    "join"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"status_code\": 200,\n  \"message\": \"Joined room successfully.\",\n  \"error\": false,\n  \"error_code\": null,\n  \"data\": {\n    \"code\": \"KM7PX\",\n    \"players\": [\n      {\n        \"playerId\": \"4f9d2242-b91c-43fe-a86d-66e85d9980d2\",\n        \"name\": \"Mohyddine\",\n        \"displayName\": \"Mohyddine\",\n        \"symbol\": \"X\",\n        \"isCreator\": true,\n        \"connected\": false\n      },\n      {\n        \"playerId\": \"7a3e811c-22dc-4fef-a419-482a01efba83\",\n        \"name\": \"Alex\",\n        \"displayName\": \"Alex\",\n        \"symbol\": \"O\",\n        \"isCreator\": false,\n        \"connected\": false\n      }\n    ],\n    \"gameStatus\": \"COUNTDOWN\",\n    \"createdAt\": 1726650000000,\n    \"expiresAt\": 1726650600000,\n    \"winnerPlayerId\": null,\n    \"winReason\": null,\n    \"board\": [null, null, null, null, null, null, null, null, null],\n    \"currentTurn\": null,\n    \"turnTimeRemaining\": 30,\n    \"rematch\": null\n  }\n}"
+            },
+            {
+              "name": "Room Full (400)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms/KM7PX/join",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms",
+                    "KM7PX",
+                    "join"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"status_code\": 400,\n  \"message\": \"Room is full.\",\n  \"error\": true,\n  \"error_code\": \"ROOM_FULL\",\n  \"data\": null\n}"
+            },
+            {
+              "name": "Room Not Found (404)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms/ZZZZZ/join",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms",
+                    "ZZZZZ",
+                    "join"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"status_code\": 404,\n  \"message\": \"Room not found.\",\n  \"error\": true,\n  \"error_code\": \"ROOM_NOT_FOUND\",\n  \"data\": null\n}"
+            },
+            {
+              "name": "Invalid Room Code Format (400)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms/TOOLONGROOMCODEEXCEEDING20CHARS/join",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms",
+                    "TOOLONGROOMCODEEXCEEDING20CHARS",
+                    "join"
+                  ]
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"status_code\": 400,\n  \"message\": \"Invalid room code format.\",\n  \"error\": true,\n  \"error_code\": \"INVALID_ROOM_CODE\",\n  \"data\": null\n}"
+            },
+            {
+              "name": "Room Expired (410)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms/EXPRD/join",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms",
+                    "EXPRD",
+                    "join"
+                  ]
+                }
+              },
+              "status": "Gone",
+              "code": 410,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"status_code\": 410,\n  \"message\": \"Room has expired.\",\n  \"error\": true,\n  \"error_code\": \"ROOM_EXPIRED\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Get Current Room",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rooms/current",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "rooms",
+                "current"
+              ]
+            },
+            "description": "Returns the active room status and full state for the authenticated player."
+          },
+          "response": [
+            {
+              "name": "Current Room Retrieved",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms/current",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms",
+                    "current"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"status_code\": 200,\n  \"message\": \"Room retrieved successfully.\",\n  \"error\": false,\n  \"error_code\": null,\n  \"data\": {\n    \"code\": \"KM7PX\",\n    \"players\": [\n      {\n        \"playerId\": \"4f9d2242-b91c-43fe-a86d-66e85d9980d2\",\n        \"name\": \"Mohyddine\",\n        \"displayName\": \"Mohyddine\",\n        \"symbol\": \"X\",\n        \"isCreator\": true,\n        \"connected\": true\n      },\n      {\n        \"playerId\": \"7a3e811c-22dc-4fef-a419-482a01efba83\",\n        \"name\": \"Alex\",\n        \"displayName\": \"Alex\",\n        \"symbol\": \"O\",\n        \"isCreator\": false,\n        \"connected\": true\n      }\n    ],\n    \"gameStatus\": \"PLAYING\",\n    \"createdAt\": 1726650000000,\n    \"expiresAt\": 1726650600000,\n    \"winnerPlayerId\": null,\n    \"winReason\": null,\n    \"board\": [\"X\", null, null, null, \"O\", null, null, null, null],\n    \"currentTurn\": \"4f9d2242-b91c-43fe-a86d-66e85d9980d2\",\n    \"turnTimeRemaining\": 27,\n    \"rematch\": null\n  }\n}"
+            },
+            {
+              "name": "Not In Room (404)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms/current",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms",
+                    "current"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"status_code\": 404,\n  \"message\": \"You are not currently in a room.\",\n  \"error\": true,\n  \"error_code\": \"NOT_IN_ROOM\",\n  \"data\": null\n}"
+            }
+          ]
+        },
+        {
+          "name": "Leave Current Room",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/v1/rooms/current",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "v1",
+                "rooms",
+                "current"
+              ]
+            },
+            "description": "Leaves the player's current room. If game was in progress, opponent automatically wins by ABANDONMENT."
+          },
+          "response": [
+            {
+              "name": "Left Room Successfully",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms/current",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms",
+                    "current"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"status_code\": 200,\n  \"message\": \"Left room successfully.\",\n  \"error\": false,\n  \"error_code\": null,\n  \"data\": {\n    \"left\": true,\n    \"roomDeleted\": false\n  }\n}"
+            },
+            {
+              "name": "Not In Room (404)",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms/current",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "api",
+                    "v1",
+                    "rooms",
+                    "current"
+                  ]
+                }
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"status_code\": 404,\n  \"message\": \"You are not in a room.\",\n  \"error\": true,\n  \"error_code\": \"NOT_IN_ROOM\",\n  \"data\": null\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "exec": [
+          ""
+        ],
+        "type": "text/javascript"
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "exec": [
+          ""
+        ],
+        "type": "text/javascript"
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "roomCode",
+      "value": "KM7PX",
+      "type": "string"
+    }
+  ]
+}
