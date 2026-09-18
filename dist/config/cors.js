@@ -1,4 +1,5 @@
 import { config } from "./index.js";
+export const PRODUCTION_FRONTEND_ORIGIN = "https://games.codewithmehyo.com";
 const isLocalhostOrigin = (origin) => {
     try {
         const url = new URL(origin);
@@ -21,11 +22,15 @@ export const corsOptions = {
             callback(null, true);
             return;
         }
-        if (config.corsOrigin && origin === config.corsOrigin) {
+        if (origin === PRODUCTION_FRONTEND_ORIGIN ||
+            (config.corsOrigin && origin === config.corsOrigin)) {
             callback(null, true);
             return;
         }
         callback(new Error(`Origin ${origin} not allowed by CORS`));
     },
     credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type"],
+    optionsSuccessStatus: 204,
 };

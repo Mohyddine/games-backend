@@ -8,6 +8,7 @@ export const getSessionCookieOptions = () => {
         httpOnly: true,
         secure: config.isProduction,
         sameSite: config.isProduction ? "none" : "lax",
+        path: "/",
         maxAge: SESSION_TTL_MS,
     };
 };
