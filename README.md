@@ -1,6 +1,6 @@
-# Real-Time Tic-Tac-Toe Backend
+# Real-Time Multiplayer Games Backend
 
-Authoritative real-time 1-vs-1 Tic-Tac-Toe backend built with Node.js, Express 5, TypeScript, and Socket.IO.
+Authoritative real-time 1-vs-1 games backend built with Node.js, Express 5, TypeScript, and Socket.IO. Supported games are Tic-Tac-Toe and Rock Paper Scissors.
 
 ---
 
@@ -30,11 +30,15 @@ Authoritative real-time 1-vs-1 Tic-Tac-Toe backend built with Node.js, Express 5
 
 ## Overview
 
-- **1-vs-1 Authoritative Gameplay**: The server authoritatively validates turns, moves, win/draw conditions, and timers.
+- **1-vs-1 Authoritative Gameplay**: The server authoritatively validates room membership, moves/choices, win/draw conditions, and timers.
 - **Accountless Session Architecture**: Players enter a display name (or receive an auto-generated one) and are identified via a secure HTTP-only cookie.
 - **Ephemeral In-Memory State**: Active sessions, rooms, games, and timers live in memory (no SQL/NoSQL database or Redis required).
 - **Graceful Reconnection**: Players who briefly drop network connection have a 60-second window to reconnect without forfeiting.
-- **Authoritative Timing**: 30-second authoritative turn timer (choosing a uniformly random available cell on timeout), 10-minute waiting room expiration, 30-second rematch request expiration window, and 3-second synchronized countdown on game start and rematch start.
+- **Authoritative Timing**: Tic-Tac-Toe has a 30-second turn timer; waiting rooms expire after 10 minutes, rematch requests expire after 30 seconds, and RPS results use a synchronized 3-second countdown.
+
+Every room has exactly one `gameType`: `TIC_TAC_TOE` or `ROCK_PAPER_SCISSORS`. The creator selects it; the joining player supplies only the room code.
+
+Tic-Tac-Toe preserves the existing X/O, turn, timer, win, draw, rematch, reconnect, and abandonment behavior. Rock Paper Scissors lets each player privately submit one of `ROCK`, `PAPER`, or `SCISSORS`; both choices are revealed after both submissions and the `3 → 2 → 1` result countdown.
 
 ---
 
@@ -73,7 +77,9 @@ Authoritative real-time 1-vs-1 Tic-Tac-Toe backend built with Node.js, Express 5
 │   │   ├── roomStore.ts      # Room state, game loop, timers, rematch handling, sanitization
 │   │   └── roomRouter.ts     # /api/v1/rooms endpoints (create, join, get current, leave)
 │   └── game/
-│       └── board.ts          # 3x3 board logic, win check, full board check, empty cells
+│       ├── board.ts          # Tic-Tac-Toe board logic
+│       ├── gameTypes.ts      # Supported room game types
+│       └── rockPaperScissors.ts # RPS choices and winner rules
 ├── dist/                     # Compiled JavaScript (generated on build)
 ├── postman_collection.json   # Postman Collection v2.1 for REST endpoints & socket documentation
 ├── tsconfig.json             # TypeScript configuration
@@ -209,7 +215,7 @@ GET /
 ```json
 {
   "status": "ok",
-  "service": "tic-tac-toe-api",
+  "service": "real-time-multiplayer-games-api",
   "version": "1.0.0"
 }
 ```
@@ -263,9 +269,16 @@ POST /api/v1/rooms
   "error_code": null,
   "data": {
     "code": "KM7PX",
+    "gameType": "TIC_TAC_TOE",
     "gameStatus": "WAITING"
   }
 }
+```
+
+`gameType` is required and must be `TIC_TAC_TOE` or `ROCK_PAPER_SCISSORS`. Invalid values return `400 INVALID_GAME_TYPE`.
+
+```json
+{ "gameType": "ROCK_PAPER_SCISSORS" }
 ```
 
 ---
@@ -287,6 +300,7 @@ POST /api/v1/rooms/:code/join
   "error_code": null,
   "data": {
     "code": "KM7PX",
+    "gameType": "TIC_TAC_TOE",
     "players": [
       {
         "playerId": "4f9d2242-b91c-43fe-a86d-66e85d9980d2",
@@ -382,7 +396,8 @@ The connection handshake inspects `socket.handshake.headers.cookie` for `game-se
 |---|---|---|
 | `room:join` | `{ "code": "KM7PX" }` | Associates/authenticates the player's existing session socket with the room's Socket.IO channel and restores real-time connection. Requires prior room membership via `POST /api/v1/rooms` or `POST /api/v1/rooms/:code/join`. Does **not** create or add another player. Uses the authenticated HTTP-only session cookie (the client never chooses a playerId). |
 | `room:leave` | *(none)* | Leave the current room over WebSocket. |
-| `game:move` | `{ "cellIndex": 4 }` | Submit a move on board index `0..8` (supports `{ "cell": 4 }` or `{ "index": 4 }`). |
+| `game:move` | `{ "cellIndex": 4 }` | Submit a Tic-Tac-Toe move on board index `0..8` (supports `{ "cell": 4 }` or `{ "index": 4 }`). |
+| `game:rps:submit` | `{ "choice": "ROCK" }` | Submit exactly one RPS choice per round. Allowed values are `ROCK`, `PAPER`, and `SCISSORS`. |
 | `rematch:request` | *(none)* | Request a rematch after a game is `FINISHED` (starts a 30-second rematch request expiration window). |
 | `rematch:accept` | *(none)* | Opponent accepts pending rematch request (resets board and starts synchronized 3-second countdown `3 → 2 → 1`). |
 | `rematch:decline` | *(none)* | Opponent declines rematch (deletes room). |
@@ -429,6 +444,7 @@ Authoritative game state broadcast after valid moves, player reconnects, and eve
 ```json
 {
   "code": "KM7PX",
+  "gameType": "TIC_TAC_TOE",
   "gameStatus": "PLAYING",
   "board": ["X", null, null, null, "O", null, null, null, null],
   "players": [
@@ -456,6 +472,22 @@ Authoritative game state broadcast after valid moves, player reconnects, and eve
   "rematch": null
 }
 ```
+
+For RPS, `game:state` includes a private projection for the authenticated socket:
+
+```json
+{
+  "gameType": "ROCK_PAPER_SCISSORS",
+  "gameStatus": "PLAYING",
+  "rps": {
+    "myChoice": "ROCK",
+    "opponentChoice": null,
+    "opponentHasChosen": true
+  }
+}
+```
+
+The opponent's choice remains hidden until both players submit. The server then emits `game:countdown` with `3`, `2`, and `1`, reveals both choices, sets `winnerPlayerId` and `winReason` (`NORMAL` or `DRAW`), and transitions to `FINISHED`. The existing rematch, reconnect grace period, abandonment, and rematch expiration behavior applies to both games; an accepted RPS rematch clears the previous choices.
 
 #### `game:finished`
 Broadcast when the game reaches a terminal state.

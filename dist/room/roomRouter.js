@@ -3,6 +3,7 @@ import { param, validationResult } from "express-validator";
 import { requireSession } from "../middleware/auth.js";
 import { createRoom, joinRoom, getPlayerRoom, leaveRoom, sanitizeRoom, normalizeRoomCode, } from "./roomStore.js";
 import { createSuccessResponse, AppError } from "../middleware/response.js";
+import { isGameType } from "../game/gameTypes.js";
 export const roomRouter = Router();
 // Middleware to ensure session exists
 roomRouter.use(requireSession);
@@ -11,9 +12,13 @@ roomRouter.post("/", (req, res, next) => {
     try {
         const session = req.session;
         const io = req.app.get("io");
-        const room = createRoom(session.playerId, session.name, io);
+        if (!isGameType(req.body?.gameType)) {
+            throw new AppError(400, "Invalid game type.", "INVALID_GAME_TYPE");
+        }
+        const room = createRoom(session.playerId, session.name, req.body.gameType, io);
         res.status(201).json(createSuccessResponse({
             code: room.code,
+            gameType: room.gameType,
             gameStatus: room.gameStatus,
         }, 201, "Room created successfully."));
     }

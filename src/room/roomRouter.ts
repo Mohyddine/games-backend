@@ -11,6 +11,7 @@ import {
 } from "./roomStore.js";
 import { createSuccessResponse, AppError } from "../middleware/response.js";
 import type { Server as SocketIOServer } from "socket.io";
+import { isGameType } from "../game/gameTypes.js";
 
 export const roomRouter = Router();
 
@@ -22,13 +23,17 @@ roomRouter.post("/", (req: Request, res: Response, next: NextFunction): void => 
   try {
     const session = req.session!;
     const io: SocketIOServer | undefined = req.app.get("io");
+    if (!isGameType(req.body?.gameType)) {
+      throw new AppError(400, "Invalid game type.", "INVALID_GAME_TYPE");
+    }
 
-    const room = createRoom(session.playerId, session.name, io);
+    const room = createRoom(session.playerId, session.name, req.body.gameType, io);
 
     res.status(201).json(
       createSuccessResponse(
         {
           code: room.code,
+          gameType: room.gameType,
           gameStatus: room.gameStatus,
         },
         201,

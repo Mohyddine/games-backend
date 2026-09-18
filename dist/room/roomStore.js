@@ -1,5 +1,6 @@
 import { AppError } from "../middleware/response.js";
 import { createEmptyBoard, checkWin, isBoardFull, getAvailableCells, } from "../game/board.js";
+import { getRpsWinner, isRpsChoice, } from "../game/rockPaperScissors.js";
 // 5 uppercase alphanumeric characters excluding O, 0, I, and 1
 const ROOM_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 const ROOM_CODE_LENGTH = 5;
@@ -93,7 +94,7 @@ export const clearAllRoomTimers = (room) => {
         }
     }
 };
-export const createRoom = (playerId, playerName, io) => {
+export const createRoom = (playerId, playerName, gameType, io) => {
     const existingRoom = getPlayerRoom(playerId);
     if (existingRoom) {
         if (existingRoom.gameStatus === "WAITING") {
@@ -105,6 +106,7 @@ export const createRoom = (playerId, playerName, io) => {
     const expiresAt = createdAt + WAITING_ROOM_TTL_MS;
     const room = {
         code,
+        gameType,
         players: [
             {
                 playerId,
@@ -124,6 +126,7 @@ export const createRoom = (playerId, playerName, io) => {
         currentTurn: null,
         turnTimeRemaining: TURN_DURATION_SEC,
         rematch: null,
+        rpsChoices: {},
     };
     room.expirationTimer = setTimeout(() => {
         expireRoom(code, io);
@@ -190,6 +193,12 @@ export const startCountdown = (room, io) => {
     room.winnerPlayerId = null;
     room.winReason = null;
     room.currentTurn = null;
+    room.rpsChoices = {};
+    if (room.gameType === "ROCK_PAPER_SCISSORS") {
+        room.gameStatus = "PLAYING";
+        broadcastRoomState(room, io);
+        return;
+    }
     // Random assignment of X and O
     const isP1X = Math.random() < 0.5;
     room.players[0].symbol = isP1X ? "X" : "O";
@@ -254,6 +263,8 @@ export const handleTurnTimeout = (room, io) => {
     makeMove(room, currentTurnPlayer, cellIndex, io);
 };
 export const makeMove = (room, playerId, cellIndex, io) => {
+    if (room.gameType !== "TIC_TAC_TOE")
+        return false;
     // Server-authoritative validation
     if (room.gameStatus !== "PLAYING")
         return false;
@@ -305,6 +316,57 @@ export const makeMove = (room, playerId, cellIndex, io) => {
     broadcastGameState(room, io);
     startTurnTimer(room, io);
     return true;
+};
+export const submitRpsChoice = (room, playerId, choice, io) => {
+    if (room.gameType !== "ROCK_PAPER_SCISSORS")
+        return false;
+    if (room.gameStatus !== "PLAYING")
+        return false;
+    if (!room.players.some((player) => player.playerId === playerId && !player.left))
+        return false;
+    if (!isRpsChoice(choice) || room.rpsChoices[playerId])
+        return false;
+    room.rpsChoices[playerId] = choice;
+    broadcastGameState(room, io);
+    if (room.players.length === 2 && room.players.every((player) => room.rpsChoices[player.playerId])) {
+        startRpsResultCountdown(room, io);
+    }
+    return true;
+};
+const startRpsResultCountdown = (room, io) => {
+    clearCountdownTimer(room);
+    room.gameStatus = "COUNTDOWN";
+    broadcastGameState(room, io);
+    let seconds = 3;
+    io.to(room.code).emit("game:countdown", { count: seconds });
+    const runTick = () => {
+        seconds--;
+        if (seconds > 0) {
+            io.to(room.code).emit("game:countdown", { count: seconds });
+            room.countdownTimer = setTimeout(runTick, 1000);
+            return;
+        }
+        room.countdownTimer = undefined;
+        finishRpsRound(room, io);
+    };
+    room.countdownTimer = setTimeout(runTick, 1000);
+};
+const finishRpsRound = (room, io) => {
+    const [first, second] = room.players;
+    const firstChoice = room.rpsChoices[first.playerId];
+    const secondChoice = room.rpsChoices[second.playerId];
+    if (!firstChoice || !secondChoice)
+        return;
+    const winner = getRpsWinner(first.playerId, firstChoice, second.playerId, secondChoice);
+    room.gameStatus = "FINISHED";
+    room.winnerPlayerId = winner;
+    room.winReason = winner === "DRAW" ? "DRAW" : "NORMAL";
+    broadcastGameState(room, io);
+    io.to(room.code).emit("game:finished", {
+        winner: winner === "DRAW" ? "DRAW" : winner,
+        winReason: room.winReason,
+        room: sanitizeRoom(room),
+    });
 };
 export const requestRematch = (room, playerId, io) => {
     if (room.gameStatus !== "FINISHED")
@@ -545,7 +607,7 @@ export const deleteRoom = (code, io) => {
     rooms.delete(code);
     console.log(`Room deleted: ${code}`);
 };
-export const getClientGameState = (room) => {
+export const getClientGameState = (room, viewerPlayerId) => {
     const players = room.players.map((p) => ({
         playerId: p.playerId,
         name: p.displayName,
@@ -555,11 +617,14 @@ export const getClientGameState = (room) => {
     }));
     return {
         code: room.code,
+        gameType: room.gameType,
         gameStatus: room.gameStatus,
         board: room.board,
         players,
         currentTurn: room.currentTurn,
         winner: room.winnerPlayerId || null,
+        winnerPlayerId: room.winnerPlayerId || null,
+        winReason: room.winReason ?? null,
         turnTimeRemaining: room.turnTimeRemaining,
         connectionState: {
             allConnected: room.players.every((p) => p.connected),
@@ -570,13 +635,29 @@ export const getClientGameState = (room) => {
                 expiresAt: room.rematch.expiresAt,
             }
             : null,
+        rps: room.gameType === "ROCK_PAPER_SCISSORS"
+            ? {
+                myChoice: viewerPlayerId ? room.rpsChoices[viewerPlayerId] ?? null : null,
+                opponentChoice: (() => {
+                    const opponent = viewerPlayerId
+                        ? room.players.find((player) => player.playerId !== viewerPlayerId)
+                        : undefined;
+                    return room.gameStatus === "FINISHED" && opponent
+                        ? room.rpsChoices[opponent.playerId] ?? null
+                        : null;
+                })(),
+                opponentHasChosen: viewerPlayerId
+                    ? room.players.some((player) => player.playerId !== viewerPlayerId &&
+                        Boolean(room.rpsChoices[player.playerId]))
+                    : false,
+            }
+            : null,
     };
 };
 export const broadcastGameState = (room, io) => {
-    const state = getClientGameState(room);
     for (const player of room.players) {
         if (player.socketId) {
-            io.to(player.socketId).emit("game:state", state);
+            io.to(player.socketId).emit("game:state", getClientGameState(room, player.playerId));
         }
     }
 };
@@ -587,7 +668,7 @@ export const broadcastRoomState = (room, io) => {
     broadcastGameState(room, io);
 };
 export const sanitizeRoom = (room) => {
-    const { expirationTimer, turnTimer, turnInterval, turnStartedAt, countdownTimer, ...safeRoom } = room;
+    const { expirationTimer, turnTimer, turnInterval, turnStartedAt, countdownTimer, rpsChoices, ...safeRoom } = room;
     const safePlayers = room.players.map(({ reconnectTimer, ...p }) => p);
     const safeRematch = room.rematch
         ? {

@@ -19,7 +19,7 @@ export const createApp = () => {
   app.get("/", (_req, res) => {
     res.status(200).json({
       status: "ok",
-      service: "tic-tac-toe-api",
+      service: "real-time-multiplayer-games-api",
       version: "1.0.0",
     });
   });

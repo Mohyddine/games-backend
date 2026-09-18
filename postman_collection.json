@@ -1,8 +1,8 @@
 {
   "info": {
     "_postman_id": "7bf3df8c-2f95-46aa-9dc7-6efaeefb21a3",
-    "name": "Tic-Tac-Toe Real-Time Game API",
-    "description": "Comprehensive Postman collection for testing the authoritative 1-vs-1 Tic-Tac-Toe backend API.\n\n### Authentication\nAuthentication is handled via the HTTP-only cookie `game-session`. Postman automatically stores and passes cookies back on subsequent requests when executing `POST /api/v1/session`.\n\n### Room Lifecycle & Socket Integration\n1. **Room Creation / Joining (REST)**:\n   - `POST /api/v1/rooms` creates a room (Player 1).\n   - `POST /api/v1/rooms/:code/join` adds Player 2 to the room and starts the 3-second countdown.\n2. **Socket.IO Real-Time Channel**:\n   - Sockets authenticate via the `game-session` cookie during the handshake.\n   - Client emits `room:join` with `{ \"code\": \"...\" }` to associate the socket connection with their room channel and restore state (this does not add a new player).\n   - Real-time game interactions (moves, 30s turn timer, 60s reconnect grace, 30s rematch request expiration) use Socket.IO events as documented in README.md.",
+    "name": "Real-Time Multiplayer Games API",
+    "description": "Comprehensive collection for the authoritative 1-vs-1 Tic-Tac-Toe and Rock Paper Scissors backend.\n\n### Authentication\nAuthentication uses the HTTP-only `game-session` cookie. Postman stores and passes cookies after `POST /api/v1/session`.\n\n### Room Lifecycle\nThe creator must POST `{ \"gameType\": \"TIC_TAC_TOE\" }` or `{ \"gameType\": \"ROCK_PAPER_SCISSORS\" }` to `/api/v1/rooms`. The joining player posts only to `/api/v1/rooms/:code/join`; the room game type is authoritative.\n\n### Socket.IO RPS event\nAfter both players join an RPS room, each authenticated socket emits `game:rps:submit` once with `{ \"choice\": \"ROCK\" }`. Allowed choices are `ROCK`, `PAPER`, and `SCISSORS`. Choices remain private until both players submit; the server emits `game:countdown` (`3`, `2`, `1`) and then `game:state`/`game:finished` with the result. Rematches clear choices and use the same lifecycle. See README.md for the complete event protocol.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -227,7 +227,7 @@
       "description": "Endpoints to manage game rooms.",
       "item": [
         {
-          "name": "Create Room",
+          "name": "Create Tic-Tac-Toe Room",
           "event": [
             {
               "listen": "test",
@@ -249,7 +249,16 @@
           ],
           "request": {
             "method": "POST",
-            "header": [],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"gameType\": \"TIC_TAC_TOE\"\n}"
+            },
             "url": {
               "raw": "{{baseUrl}}/api/v1/rooms",
               "host": [
@@ -261,7 +270,7 @@
                 "rooms"
               ]
             },
-            "description": "Creates a new game room. The creator is registered as Player 1, and the room code (5 uppercase characters excluding O, 0, I, 1) is automatically saved to the collection variable `{{roomCode}}`."
+            "description": "Creates a new Tic-Tac-Toe room. The creator selects `gameType` (`TIC_TAC_TOE` or `ROCK_PAPER_SCISSORS`) and is registered as Player 1. The room code is saved to `{{roomCode}}`."
           },
           "response": [
             {
@@ -291,9 +300,32 @@
                 }
               ],
               "cookie": [],
-              "body": "{\n  \"success\": true,\n  \"status_code\": 201,\n  \"message\": \"Room created successfully.\",\n  \"error\": false,\n  \"error_code\": null,\n  \"data\": {\n    \"code\": \"KM7PX\",\n    \"gameStatus\": \"WAITING\"\n  }\n}"
+              "body": "{\n  \"success\": true,\n  \"status_code\": 201,\n  \"message\": \"Room created successfully.\",\n  \"error\": false,\n  \"error_code\": null,\n  \"data\": {\n    \"code\": \"KM7PX\",\n    \"gameType\": \"TIC_TAC_TOE\",\n    \"gameStatus\": \"WAITING\"\n  }\n}"
             },
             {
+              "name": "Create Rock Paper Scissors Room",
+              "request": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"gameType\": \"ROCK_PAPER_SCISSORS\"\n}"
+                },
+                "url": {
+                  "raw": "{{baseUrl}}/api/v1/rooms",
+                  "host": ["{{baseUrl}}"],
+                  "path": ["api", "v1", "rooms"]
+                },
+                "description": "Creates an RPS room. The joining player must not provide a game type."
+              }
+            },
+            {
+              "name": "Join Room",
               "name": "Unauthorized (Missing Session Cookie)",
               "originalRequest": {
                 "method": "POST",

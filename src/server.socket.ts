@@ -15,6 +15,7 @@ import {
   sanitizeRoom,
   normalizeRoomCode,
   getRoom,
+  submitRpsChoice,
 } from "./room/roomStore.js";
 
 export interface SocketServerContext {
@@ -143,6 +144,16 @@ export const setupSocketIO = (httpServer: http.Server): SocketServerContext => {
         makeMove(currentRoom, playerId, selectedCell, io);
       } catch (err) {
         // Ignored
+      }
+    });
+
+    socket.on("game:rps:submit", (payload: { choice?: unknown }) => {
+      try {
+        const currentRoom = getPlayerRoom(playerId);
+        if (!currentRoom) return;
+        submitRpsChoice(currentRoom, playerId, payload?.choice, io);
+      } catch (err) {
+        // Invalid submissions are ignored, matching game:move behavior.
       }
     });
 

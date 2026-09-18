@@ -1,7 +1,7 @@
 import { Server as SocketIOServer } from "socket.io";
 import { corsOptions } from "./config/cors.js";
 import { SESSION_COOKIE_NAME, getSession } from "./session/sessionStore.js";
-import { getPlayerRoom, handlePlayerReconnect, handlePlayerDisconnect, makeMove, leaveRoom, requestRematch, acceptRematch, declineRematch, sanitizeRoom, normalizeRoomCode, getRoom, } from "./room/roomStore.js";
+import { getPlayerRoom, handlePlayerReconnect, handlePlayerDisconnect, makeMove, leaveRoom, requestRematch, acceptRematch, declineRematch, sanitizeRoom, normalizeRoomCode, getRoom, submitRpsChoice, } from "./room/roomStore.js";
 // Helper to parse cookies from raw Cookie header string
 const parseCookies = (cookieHeader) => {
     const list = {};
@@ -104,6 +104,17 @@ export const setupSocketIO = (httpServer) => {
             }
             catch (err) {
                 // Ignored
+            }
+        });
+        socket.on("game:rps:submit", (payload) => {
+            try {
+                const currentRoom = getPlayerRoom(playerId);
+                if (!currentRoom)
+                    return;
+                submitRpsChoice(currentRoom, playerId, payload?.choice, io);
+            }
+            catch (err) {
+                // Invalid submissions are ignored, matching game:move behavior.
             }
         });
         // Client -> Server: rematch:request
