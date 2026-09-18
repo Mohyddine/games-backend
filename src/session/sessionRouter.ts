@@ -17,8 +17,8 @@ const validateSessionBody = [
     .trim()
     .isLength({ min: 2, max: 20 })
     .withMessage("Name must be between 2 and 20 characters.")
-    .matches(/^[a-zA-Z0-9 ]+$/)
-    .withMessage("Name must contain letters, numbers, and spaces only."),
+    .matches(/^[a-zA-Z0-9 -]+$/)
+    .withMessage("Name must contain letters, numbers, spaces, and hyphens only."),
 ];
 
 sessionRouter.post(
