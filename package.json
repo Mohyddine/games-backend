@@ -5,6 +5,7 @@
   "main": "index.js",
   "scripts": {
     "build": "tsc",
+    "lint": "tsc --noEmit",
     "build:watch": "tsc -w --preserveWatchOutput",
     "start": "node dist/server.js",
     "dev": "nodemon --watch dist dist/server.js",

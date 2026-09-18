@@ -1,5 +1,4 @@
 import type { Server as SocketIOServer } from "socket.io";
-import { generateRandomPlayerName } from "../session/sessionStore.js";
 import { AppError } from "../middleware/response.js";
 import {
   BoardState,
@@ -113,20 +112,15 @@ export const getPlayerRoom = (playerId: string): Room | null => {
   return getRoom(code);
 };
 
-// Recompute display names without mutating original session names
+// Recompute room-specific display names without mutating original session names.
 export const refreshDisplayNames = (players: RoomPlayer[]): void => {
-  if (players.length <= 1) {
-    if (players[0]) players[0].displayName = players[0].name;
-    return;
-  }
+  const nameCounts = new Map<string, number>();
 
-  const [p1, p2] = players;
-  if (p1.name === p2.name) {
-    p1.displayName = p1.name;
-    p2.displayName = `${p2.name}2`;
-  } else {
-    p1.displayName = p1.name;
-    p2.displayName = p2.name;
+  for (const player of players) {
+    const normalizedName = player.name.trim();
+    const count = (nameCounts.get(normalizedName) ?? 0) + 1;
+    nameCounts.set(normalizedName, count);
+    player.displayName = count === 1 ? player.name : `${player.name}${count}`;
   }
 };
 

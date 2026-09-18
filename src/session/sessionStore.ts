@@ -6,21 +6,20 @@ export interface Session {
   expiresAt: number; // Unix timestamp in milliseconds
 }
 
-export const SESSION_COOKIE_NAME = "tic_tac_toe_session";
+export const SESSION_COOKIE_NAME = "game-session";
 export const SESSION_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
 
 // In-memory session store: sessionId -> Session
 const sessions = new Map<string, Session>();
 
-export const createSession = (name?: string): { sessionId: string; session: Session } => {
+export const createSession = (name: string): { sessionId: string; session: Session } => {
   const sessionId = crypto.randomUUID();
   const playerId = crypto.randomUUID();
-  const chosenName = name && name.trim().length > 0 ? name.trim() : generateRandomPlayerName();
   const expiresAt = Date.now() + SESSION_TTL_MS;
 
   const session: Session = {
     playerId,
-    name: chosenName,
+    name: name.trim(),
     expiresAt,
   };
 
@@ -41,17 +40,4 @@ export const getSession = (sessionId: string | undefined): Session | null => {
   // Refresh expiration on valid activity (sliding expiration)
   session.expiresAt = Date.now() + SESSION_TTL_MS;
   return session;
-};
-
-export const generateRandomPlayerName = (existingNames: string[] = []): string => {
-  const existingSet = new Set(existingNames);
-  for (let i = 0; i < 100; i++) {
-    const num = Math.floor(Math.random() * 10000);
-    const candidate = `Player${num.toString().padStart(4, "0")}`;
-    if (!existingSet.has(candidate)) {
-      return candidate;
-    }
-  }
-  // Fallback if all attempts collide
-  return `Player${Math.floor(Math.random() * 10000).toString().padStart(4, "0")}`;
 };

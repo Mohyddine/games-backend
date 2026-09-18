@@ -45,21 +45,14 @@ export const getPlayerRoom = (playerId) => {
         return null;
     return getRoom(code);
 };
-// Recompute display names without mutating original session names
+// Recompute room-specific display names without mutating original session names.
 export const refreshDisplayNames = (players) => {
-    if (players.length <= 1) {
-        if (players[0])
-            players[0].displayName = players[0].name;
-        return;
-    }
-    const [p1, p2] = players;
-    if (p1.name === p2.name) {
-        p1.displayName = p1.name;
-        p2.displayName = `${p2.name}2`;
-    }
-    else {
-        p1.displayName = p1.name;
-        p2.displayName = p2.name;
+    const nameCounts = new Map();
+    for (const player of players) {
+        const normalizedName = player.name.trim();
+        const count = (nameCounts.get(normalizedName) ?? 0) + 1;
+        nameCounts.set(normalizedName, count);
+        player.displayName = count === 1 ? player.name : `${player.name}${count}`;
     }
 };
 export const clearTurnTimers = (room) => {

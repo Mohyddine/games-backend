@@ -142,7 +142,7 @@ The server will listen on `http://localhost:3000` (or the configured `PORT`).
 
 ## Session & Cookie Management
 
-- **Cookie Name**: `tic_tac_toe_session`
+- **Cookie Name**: `game-session`
 - **Lifetime**: 24 hours of inactivity (`24 * 60 * 60 * 1000` ms). Any authenticated request refreshes the session expiration.
 - **Attributes**:
   - `httpOnly: true` (prevents client-side script access)
@@ -188,7 +188,7 @@ All routes return JSON using a standard envelope.
 | `INVALID_NAME` | 400 | Session name does not meet validation criteria. |
 | `INVALID_ROOM_CODE` | 400 | Provided room code format is invalid. |
 | `ROOM_FULL` | 400 | The room already has two players. |
-| `UNAUTHORIZED` | 401 | Missing `tic_tac_toe_session` cookie. |
+| `UNAUTHORIZED` | 401 | Missing `game-session` cookie. |
 | `SESSION_EXPIRED` | 401 | Session has expired or does not exist in store. |
 | `NOT_IN_ROOM` | 404 | Player is not currently assigned to any active room. |
 | `ROOM_NOT_FOUND` | 404 | The specified room code does not exist. |
@@ -221,15 +221,15 @@ GET /
 POST /api/v1/session
 Content-Type: application/json
 ```
-- **Auth**: Optional (if valid `tic_tac_toe_session` cookie is sent, the existing session is returned and refreshed).
-- **Body** (Optional):
+- **Auth**: Optional (if a valid `game-session` cookie is sent, the existing session is returned and refreshed).
+- **Body** (Required when creating a session):
 ```json
 {
   "name": "Mohyddine"
 }
 ```
-*Rules for `name`*: Optional. 2–20 characters. Letters, numbers, and spaces only. If omitted or empty, an automatic name format (`PlayerXXXX`, `0000`–`9999`) is generated.
-- **Sets Cookie**: `tic_tac_toe_session=<sessionId>`
+*Rules for `name`*: Required when creating a session. The trimmed name must be 2–20 characters containing only letters, numbers, and spaces. Capitalization is preserved. Missing or invalid names return `400 INVALID_NAME`. A valid `game-session` cookie restores the existing session without requiring the name again.
+- **Sets Cookie**: `game-session=<sessionId>`
 - **Response (201 Created / 200 OK)**:
 ```json
 {
@@ -251,7 +251,7 @@ Content-Type: application/json
 ```http
 POST /api/v1/rooms
 ```
-- **Auth**: Required (`tic_tac_toe_session` cookie)
+- **Auth**: Required (`game-session` cookie)
 - **Behavior**: Generates a unique 5-character room code (excluding confusing characters `O`, `0`, `I`, `1`). Room enters `WAITING` status with a 10-minute expiry timer. If the creator was in another room, they automatically leave it.
 - **Response (201 Created)**:
 ```json
@@ -274,7 +274,7 @@ POST /api/v1/rooms
 ```http
 POST /api/v1/rooms/:code/join
 ```
-- **Auth**: Required (`tic_tac_toe_session` cookie)
+- **Auth**: Required (`game-session` cookie)
 - **Path Parameter**: `:code` — Case-insensitive 5-character room code.
 - **Behavior**: Adds Player 2 to the room. Room transitions to `COUNTDOWN` (3-2-1), randomly assigns symbols `X` and `O` (with room display name conflict resolution if both players share identical names), and broadcasts synchronized real-time countdown.
 - **Response (200 OK)**:
@@ -324,7 +324,7 @@ POST /api/v1/rooms/:code/join
 ```http
 GET /api/v1/rooms/current
 ```
-- **Auth**: Required (`tic_tac_toe_session` cookie)
+- **Auth**: Required (`game-session` cookie)
 - **Response (200 OK)**: Returns the sanitized room state for the authenticated player.
 - **Error (404 Not Found)**: If the player is not currently in a room (`NOT_IN_ROOM`).
 
@@ -334,7 +334,7 @@ GET /api/v1/rooms/current
 ```http
 DELETE /api/v1/rooms/current
 ```
-- **Auth**: Required (`tic_tac_toe_session` cookie)
+- **Auth**: Required (`game-session` cookie)
 - **Behavior**:
   - In `WAITING`: Deletes the room immediately.
   - In `COUNTDOWN` or `PLAYING`: Forfeits the game; opponent wins by `ABANDONMENT`.
@@ -367,12 +367,12 @@ Connect to `/` with credentials enabled:
 import { io } from "socket.io-client";
 
 const socket = io("http://localhost:3000", {
-  withCredentials: true, // Sends the tic_tac_toe_session cookie
+  withCredentials: true, // Sends the game-session cookie
   transports: ["websocket", "polling"],
 });
 ```
 
-The connection handshake inspects `socket.handshake.headers.cookie` for `tic_tac_toe_session`. If invalid or missing, connection is rejected with an authentication error.
+The connection handshake inspects `socket.handshake.headers.cookie` for `game-session`. If invalid or missing, connection is rejected with an authentication error.
 
 ---
 
@@ -567,7 +567,7 @@ Lifecycle events for rematch negotiations.
 2. **First Turn**: The player assigned `'X'` always plays first.
 3. **Turn Timeout (Authoritative)**: If a player does not submit a valid move within 30 seconds, the backend authoritatively selects one uniformly random available cell and executes the move. There is no client-side control and no heuristic/AI logic. Turn timers and 1-second interval broadcasts only run while status is `PLAYING`.
 4. **Rematch Timing**: A rematch request opens a **30-second request expiration window**. If accepted by the opponent before expiration, the board resets and both players enter a **3-second synchronized countdown** (`3 → 2 → 1`) before the next match begins. If declined or if the 30-second window expires without response, the room is deleted.
-5. **Display Name Disambiguation**: If both players in a room have identical names (e.g., `"Player"`), the server appends suffixes to the room display name (`"Player"`, `"Player2"`) while preserving their original session name.
+5. **Display Name Disambiguation**: If both players in a room have identical names (for example, `"John"` and `"John"`), the server displays them as `"John"` and `"John2"` while preserving both original session names as `"John"`. Different names such as `"John"` and `"Michael"` remain unchanged.
 6. **Disconnect Grace Period**: When a socket drops unexpectedly, a 60-second timer begins. If the player reconnects with their session cookie before the grace period ends, their socket connection is restored. If the grace period expires, the remaining player wins by `ABANDONMENT`.
 7. **Timer Cleanup**: All turn, countdown, rematch, reconnect, and room expiration timers are strictly cleared whenever a game finishes, a player abandons, a room is deleted, or a new round begins, preventing duplicate or leaked timers.
 
@@ -632,6 +632,6 @@ A complete Postman Collection is included at [`postman_collection.json`](./postm
 4. The collection uses the `{{baseUrl}}` variable (preconfigured to `http://localhost:3000`).
 
 ### Features in Collection
-- Automatic cookie preservation across requests (`tic_tac_toe_session`).
+- Automatic cookie preservation across requests (`game-session`).
 - Ready-to-use requests for Health Check, Session Creation, Room Creation, Room Joining, Room Query, and Leave Room.
 - Pre-populated example responses and documentation for WebSocket events.

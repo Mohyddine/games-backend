@@ -10,15 +10,16 @@ import { createSuccessResponse, AppError } from "../middleware/response.js";
 
 export const sessionRouter = Router();
 
-// Validation chain for name if provided
+// Validation chain for a new session name. Existing sessions may be restored
+// without resubmitting their name.
 const validateSessionBody = [
   body("name")
     .optional()
     .trim()
     .isLength({ min: 2, max: 20 })
     .withMessage("Name must be between 2 and 20 characters.")
-    .matches(/^[a-zA-Z0-9 -]+$/)
-    .withMessage("Name must contain letters, numbers, spaces, and hyphens only."),
+    .matches(/^[a-zA-Z0-9 ]+$/)
+    .withMessage("Name must contain letters, numbers, and spaces only."),
 ];
 
 sessionRouter.post(
@@ -49,8 +50,12 @@ sessionRouter.post(
         }
       }
 
+      if (typeof req.body?.name !== "string" || req.body.name.trim().length === 0) {
+        throw new AppError(400, "Name is required.", "INVALID_NAME");
+      }
+
       // Create new session
-      const name: string | undefined = req.body?.name?.trim();
+      const name = req.body.name.trim();
       const { sessionId, session } = createSession(name);
 
       console.log(`Session created for player: ${session.playerId} (${session.name})`);
