@@ -2,6 +2,7 @@ import http from "node:http";
 import { createApp } from "./app.js";
 import { config } from "./config/index.js";
 import { setupSocketIO } from "./server.socket.js";
+import { deleteAllRooms } from "./room/roomStore.js";
 
 const app = createApp();
 const server = http.createServer(app);
@@ -19,6 +20,7 @@ server.listen(PORT, "0.0.0.0", () => {
 
 const gracefulShutdown = (signal: string) => {
   console.log(`Received ${signal}. Shutting down gracefully...`);
+  deleteAllRooms();
   io.close(() => {
     server.close(() => {
       console.log("HTTP & WebSocket servers closed.");

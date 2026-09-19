@@ -15,11 +15,19 @@ roomRouter.post("/", (req, res, next) => {
         if (!isGameType(req.body?.gameType)) {
             throw new AppError(400, "Invalid game type.", "INVALID_GAME_TYPE");
         }
-        const room = createRoom(session.playerId, session.name, req.body.gameType, io);
+        const rounds = req.body?.rounds;
+        if (req.body.gameType === "ROCK_PAPER_SCISSORS" &&
+            (!Number.isInteger(rounds) || rounds < 1 || rounds > 10)) {
+            throw new AppError(400, "RPS rooms require a number of rounds between 1 and 10.", "INVALID_ROUNDS");
+        }
+        const room = createRoom(session.playerId, session.name, req.body.gameType, rounds, io);
         res.status(201).json(createSuccessResponse({
             code: room.code,
             gameType: room.gameType,
             gameStatus: room.gameStatus,
+            ...(room.gameType === "ROCK_PAPER_SCISSORS"
+                ? { totalRounds: room.totalRounds }
+                : {}),
         }, 201, "Room created successfully."));
     }
     catch (err) {

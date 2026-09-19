@@ -2,7 +2,7 @@
   "info": {
     "_postman_id": "7bf3df8c-2f95-46aa-9dc7-6efaeefb21a3",
     "name": "Real-Time Multiplayer Games API",
-    "description": "Comprehensive collection for the authoritative 1-vs-1 Tic-Tac-Toe and Rock Paper Scissors backend.\n\n### Authentication\nAuthentication uses the HTTP-only `game-session` cookie. Postman stores and passes cookies after `POST /api/v1/session`.\n\n### Room Lifecycle\nThe creator must POST `{ \"gameType\": \"TIC_TAC_TOE\" }` or `{ \"gameType\": \"ROCK_PAPER_SCISSORS\" }` to `/api/v1/rooms`. The joining player posts only to `/api/v1/rooms/:code/join`; the room game type is authoritative.\n\n### Socket.IO RPS event\nAfter both players join an RPS room, each authenticated socket emits `game:rps:submit` once with `{ \"choice\": \"ROCK\" }`. Allowed choices are `ROCK`, `PAPER`, and `SCISSORS`. Choices remain private until both players submit; the server emits `game:countdown` (`3`, `2`, `1`) and then `game:state`/`game:finished` with the result. Rematches clear choices and use the same lifecycle. See README.md for the complete event protocol.",
+    "description": "Comprehensive collection for the authoritative 1-vs-1 Tic-Tac-Toe and multi-round Rock Paper Scissors backend.\n\n### Authentication\nAuthentication uses the HTTP-only `game-session` cookie. Postman stores and passes cookies after `POST /api/v1/session`.\n\n### Room Lifecycle\nThe creator must POST `{ \"gameType\": \"TIC_TAC_TOE\" }` or `{ \"gameType\": \"ROCK_PAPER_SCISSORS\", \"rounds\": 3 }` to `/api/v1/rooms`. RPS rounds must be an integer from 1 through 10. The joining player posts only to `/api/v1/rooms/:code/join`; the room game type and round count are authoritative.\n\n### Socket.IO RPS event\nAfter both players join an RPS room, each authenticated socket emits `game:rps:submit` once per round with `{ \"choice\": \"ROCK\" }`. Choices remain private until both players submit; the server emits synchronized `game:countdown` (`3`, `2`, `1`), then `game:round:result`, and automatically starts the next round. `game:finished` is emitted only after the final configured round. Rematches keep the configured round count and reset scores/history. See README.md for the complete event protocol.",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
   },
   "item": [
@@ -270,7 +270,7 @@
                 "rooms"
               ]
             },
-            "description": "Creates a new Tic-Tac-Toe room. The creator selects `gameType` (`TIC_TAC_TOE` or `ROCK_PAPER_SCISSORS`) and is registered as Player 1. The room code is saved to `{{roomCode}}`."
+            "description": "Creates a new room. Use `{ \"gameType\": \"TIC_TAC_TOE\" }` for Tic-Tac-Toe or `{ \"gameType\": \"ROCK_PAPER_SCISSORS\", \"rounds\": 3 }` for a 1-10 round RPS match. The creator is registered as Player 1 and the room code is saved to `{{roomCode}}`."
           },
           "response": [
             {
@@ -314,7 +314,7 @@
                 ],
                 "body": {
                   "mode": "raw",
-                  "raw": "{\n  \"gameType\": \"ROCK_PAPER_SCISSORS\"\n}"
+                  "raw": "{\n  \"gameType\": \"ROCK_PAPER_SCISSORS\",\n  \"rounds\": 3\n}"
                 },
                 "url": {
                   "raw": "{{baseUrl}}/api/v1/rooms",

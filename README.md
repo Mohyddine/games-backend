@@ -34,11 +34,11 @@ Authoritative real-time 1-vs-1 games backend built with Node.js, Express 5, Type
 - **Accountless Session Architecture**: Players enter a display name (or receive an auto-generated one) and are identified via a secure HTTP-only cookie.
 - **Ephemeral In-Memory State**: Active sessions, rooms, games, and timers live in memory (no SQL/NoSQL database or Redis required).
 - **Graceful Reconnection**: Players who briefly drop network connection have a 60-second window to reconnect without forfeiting.
-- **Authoritative Timing**: Tic-Tac-Toe has a 30-second turn timer; waiting rooms expire after 10 minutes, rematch requests expire after 30 seconds, and RPS results use a synchronized 3-second countdown.
+- **Authoritative Timing**: Tic-Tac-Toe has a 30-second turn timer; waiting rooms expire after 10 minutes, rematch requests expire after 30 seconds, and every RPS round uses a synchronized 3-second countdown.
 
-Every room has exactly one `gameType`: `TIC_TAC_TOE` or `ROCK_PAPER_SCISSORS`. The creator selects it; the joining player supplies only the room code.
+Every room has exactly one `gameType`: `TIC_TAC_TOE` or `ROCK_PAPER_SCISSORS`. The creator selects it and, for RPS, configures `rounds` from 1 to 10; the joining player supplies only the room code.
 
-Tic-Tac-Toe preserves the existing X/O, turn, timer, win, draw, rematch, reconnect, and abandonment behavior. Rock Paper Scissors lets each player privately submit one of `ROCK`, `PAPER`, or `SCISSORS`; both choices are revealed after both submissions and the `3 → 2 → 1` result countdown.
+Tic-Tac-Toe preserves the existing X/O, turn, timer, win, draw, rematch, reconnect, and abandonment behavior. Rock Paper Scissors is a multi-round match: each round privately accepts one of `ROCK`, `PAPER`, or `SCISSORS`, reveals both choices after the `3 → 2 → 1` result countdown, updates authoritative scores, and automatically starts the next round.
 
 ---
 
@@ -275,10 +275,16 @@ POST /api/v1/rooms
 }
 ```
 
-`gameType` is required and must be `TIC_TAC_TOE` or `ROCK_PAPER_SCISSORS`. Invalid values return `400 INVALID_GAME_TYPE`.
+`gameType` is required and must be `TIC_TAC_TOE` or `ROCK_PAPER_SCISSORS`. Invalid values return `400 INVALID_GAME_TYPE`. RPS also requires integer `rounds` from 1 through 10; invalid values return `400 INVALID_ROUNDS`.
 
 ```json
-{ "gameType": "ROCK_PAPER_SCISSORS" }
+{ "gameType": "ROCK_PAPER_SCISSORS", "rounds": 3 }
+```
+
+Tic-Tac-Toe does not require `rounds`:
+
+```json
+{ "gameType": "TIC_TAC_TOE" }
 ```
 
 ---
@@ -397,7 +403,7 @@ The connection handshake inspects `socket.handshake.headers.cookie` for `game-se
 | `room:join` | `{ "code": "KM7PX" }` | Associates/authenticates the player's existing session socket with the room's Socket.IO channel and restores real-time connection. Requires prior room membership via `POST /api/v1/rooms` or `POST /api/v1/rooms/:code/join`. Does **not** create or add another player. Uses the authenticated HTTP-only session cookie (the client never chooses a playerId). |
 | `room:leave` | *(none)* | Leave the current room over WebSocket. |
 | `game:move` | `{ "cellIndex": 4 }` | Submit a Tic-Tac-Toe move on board index `0..8` (supports `{ "cell": 4 }` or `{ "index": 4 }`). |
-| `game:rps:submit` | `{ "choice": "ROCK" }` | Submit exactly one RPS choice per round. Allowed values are `ROCK`, `PAPER`, and `SCISSORS`. |
+| `game:rps:submit` | `{ "choice": "ROCK" }` | Submit exactly one RPS choice for the current round. Allowed values are `ROCK`, `PAPER`, and `SCISSORS`; the server rejects submissions outside the active choice phase. |
 | `rematch:request` | *(none)* | Request a rematch after a game is `FINISHED` (starts a 30-second rematch request expiration window). |
 | `rematch:accept` | *(none)* | Opponent accepts pending rematch request (resets board and starts synchronized 3-second countdown `3 → 2 → 1`). |
 | `rematch:decline` | *(none)* | Opponent declines rematch (deletes room). |
@@ -432,11 +438,20 @@ Broadcast when an unfilled room expires (after 10 minutes in `WAITING`).
 ```
 
 #### `game:countdown`
-Synchronized countdown ticks (`3 → 2 → 1`) emitted on game start and rematch acceptance.
+Synchronized countdown ticks (`3 → 2 → 1`) emitted before every RPS round and for Tic-Tac-Toe game start/rematch.
 ```json
 {
-  "count": 3
+ "count": 3,
+ "currentRound": 1,
+ "totalRounds": 3
 }
+```
+
+#### `game:round:started`
+Emitted when an RPS round begins, after prior choices and round-only result state have been cleared.
+
+```json
+{ "currentRound": 2, "totalRounds": 3 }
 ```
 
 #### `game:state`
@@ -480,14 +495,22 @@ For RPS, `game:state` includes a private projection for the authenticated socket
   "gameType": "ROCK_PAPER_SCISSORS",
   "gameStatus": "PLAYING",
   "rps": {
+    "currentRound": 1,
+    "totalRounds": 3,
     "myChoice": "ROCK",
     "opponentChoice": null,
-    "opponentHasChosen": true
+    "opponentHasChosen": true,
+    "acceptingChoices": true,
+    "scores": { "player-a": 0, "player-b": 0 },
+    "stats": {},
+    "roundResult": null,
+    "matchWinnerPlayerId": null,
+    "roundHistory": []
   }
 }
 ```
 
-The opponent's choice remains hidden until both players submit. The server then emits `game:countdown` with `3`, `2`, and `1`, reveals both choices, sets `winnerPlayerId` and `winReason` (`NORMAL` or `DRAW`), and transitions to `FINISHED`. The existing rematch, reconnect grace period, abandonment, and rematch expiration behavior applies to both games; an accepted RPS rematch clears the previous choices.
+The opponent's choice remains hidden until both players submit. The server then emits `game:countdown` with `3`, `2`, and `1`, reveals both choices in `roundResult`, updates `scores`, `stats` and `roundHistory`, and emits `game:round:result`. Non-final rounds automatically enter the next `game:round:started` countdown. Only the final round transitions to `FINISHED` and emits `game:finished`; its `winner` is the complete match winner. The existing reconnect grace period, abandonment, and rematch expiration behavior applies to both games. An accepted RPS rematch keeps the configured `totalRounds` and resets the round, scores, history, choices, and results.
 
 #### `game:finished`
 Broadcast when the game reaches a terminal state.

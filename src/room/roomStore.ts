@@ -41,6 +41,25 @@ export interface RematchState {
   timer?: NodeJS.Timeout;
 }
 
+export interface RpsRoundResult {
+  winnerPlayerId: string | null;
+  isDraw: boolean;
+  playerChoices: Record<string, RpsChoice>;
+}
+
+export interface RpsRoundHistoryEntry {
+  round: number;
+  playerChoices: Record<string, RpsChoice>;
+  winnerPlayerId: string | null;
+  isDraw: boolean;
+}
+
+export interface RpsPlayerStats {
+  roundsWon: number;
+  draws: number;
+  roundsPlayed: number;
+}
+
 export interface Room {
   code: string;
   gameType: GameType;
@@ -62,10 +81,17 @@ export interface Room {
 
   // Countdown State
   countdownTimer?: NodeJS.Timeout;
+  rpsTransitionTimer?: NodeJS.Timeout;
 
   // Rematch State
   rematch: RematchState | null;
   rpsChoices: Record<string, RpsChoice>;
+  totalRounds: number | null;
+  currentRound: number;
+  playerScores: Record<string, number>;
+  rpsStats: Record<string, RpsPlayerStats>;
+  roundResult: RpsRoundResult | null;
+  rpsRoundHistory: RpsRoundHistoryEntry[];
 }
 
 // 5 uppercase alphanumeric characters excluding O, 0, I, and 1
@@ -75,6 +101,7 @@ export const WAITING_ROOM_TTL_MS = 10 * 60 * 1000; // 10 minutes
 export const TURN_DURATION_SEC = 30;
 export const RECONNECT_GRACE_PERIOD_MS = 60 * 1000; // 60 seconds
 export const REMATCH_EXPIRATION_MS = 30 * 1000; // 30 seconds
+export const RPS_ROUND_TRANSITION_MS = 2 * 1000;
 
 // In-memory rooms store: roomCode -> Room
 const rooms = new Map<string, Room>();
@@ -150,6 +177,13 @@ export const clearCountdownTimer = (room: Room): void => {
   }
 };
 
+export const clearRpsTransitionTimer = (room: Room): void => {
+  if (room.rpsTransitionTimer) {
+    clearTimeout(room.rpsTransitionTimer);
+    room.rpsTransitionTimer = undefined;
+  }
+};
+
 export const clearRematchTimer = (room: Room): void => {
   if (room.rematch?.timer) {
     clearTimeout(room.rematch.timer);
@@ -165,6 +199,7 @@ export const clearAllRoomTimers = (room: Room): void => {
   }
   clearTurnTimers(room);
   clearCountdownTimer(room);
+  clearRpsTransitionTimer(room);
   clearRematchTimer(room);
   for (const player of room.players) {
     if (player.reconnectTimer) {
@@ -178,12 +213,30 @@ export const createRoom = (
   playerId: string,
   playerName: string,
   gameType: GameType,
+  totalRoundsOrIo?: number | SocketIOServer,
   io?: SocketIOServer
 ): Room => {
+  const totalRounds =
+    typeof totalRoundsOrIo === "number" ? totalRoundsOrIo : undefined;
+  const socketServer =
+    typeof totalRoundsOrIo === "number" ? io : totalRoundsOrIo;
+  if (
+    gameType === "ROCK_PAPER_SCISSORS" &&
+    (!Number.isInteger(totalRounds) ||
+      totalRounds === undefined ||
+      totalRounds < 1 ||
+      totalRounds > 10)
+  ) {
+    throw new AppError(
+      400,
+      "RPS rooms require a number of rounds between 1 and 10.",
+      "INVALID_ROUNDS"
+    );
+  }
   const existingRoom = getPlayerRoom(playerId);
   if (existingRoom) {
     if (existingRoom.gameStatus === "WAITING") {
-      leaveRoom(playerId, io);
+      leaveRoom(playerId, socketServer);
     }
   }
 
@@ -214,16 +267,25 @@ export const createRoom = (
     turnTimeRemaining: TURN_DURATION_SEC,
     rematch: null,
     rpsChoices: {},
+    totalRounds: gameType === "ROCK_PAPER_SCISSORS" ? totalRounds! : null,
+    currentRound: 1,
+    playerScores: {},
+    rpsStats: {},
+    roundResult: null,
+    rpsRoundHistory: [],
   };
 
   room.expirationTimer = setTimeout(() => {
-    expireRoom(code, io);
+    expireRoom(code, socketServer);
   }, WAITING_ROOM_TTL_MS);
 
   rooms.set(code, room);
   playerToRoom.set(playerId, code);
 
   console.log(`Room created: ${code} by player: ${playerId} (${playerName})`);
+  if (gameType === "ROCK_PAPER_SCISSORS") {
+    console.log(`RPS match created: ${code} (${totalRounds} rounds)`);
+  }
 
   return room;
 };
@@ -292,9 +354,50 @@ export const joinRoom = (
   return room;
 };
 
+const emitRpsCountdown = (room: Room, io: SocketIOServer, count: number): void => {
+  io.to(room.code).emit("game:countdown", {
+    count,
+    currentRound: room.currentRound,
+    totalRounds: room.totalRounds,
+  });
+};
+
+const startRpsRoundCountdown = (room: Room, io: SocketIOServer): void => {
+  clearTurnTimers(room);
+  clearCountdownTimer(room);
+  clearRpsTransitionTimer(room);
+  room.gameStatus = "COUNTDOWN";
+  room.rpsChoices = {};
+  room.roundResult = null;
+  console.log(`RPS round started in room ${room.code}: round ${room.currentRound}/${room.totalRounds}`);
+
+  io.to(room.code).emit("game:round:started", {
+    currentRound: room.currentRound,
+    totalRounds: room.totalRounds,
+  });
+  broadcastGameState(room, io);
+
+  let seconds = 3;
+  emitRpsCountdown(room, io, seconds);
+  const runTick = () => {
+    seconds--;
+    if (seconds > 0) {
+      emitRpsCountdown(room, io, seconds);
+      room.countdownTimer = setTimeout(runTick, 1000);
+      return;
+    }
+
+    room.countdownTimer = undefined;
+    room.gameStatus = "PLAYING";
+    broadcastGameState(room, io);
+  };
+  room.countdownTimer = setTimeout(runTick, 1000);
+};
+
 export const startCountdown = (room: Room, io: SocketIOServer): void => {
   clearTurnTimers(room);
   clearCountdownTimer(room);
+  clearRpsTransitionTimer(room);
   clearRematchTimer(room);
 
   room.gameStatus = "COUNTDOWN";
@@ -302,11 +405,19 @@ export const startCountdown = (room: Room, io: SocketIOServer): void => {
   room.winnerPlayerId = null;
   room.winReason = null;
   room.currentTurn = null;
-  room.rpsChoices = {};
 
   if (room.gameType === "ROCK_PAPER_SCISSORS") {
-    room.gameStatus = "PLAYING";
-    broadcastRoomState(room, io);
+    room.currentRound = 1;
+    room.playerScores = Object.fromEntries(room.players.map((player) => [player.playerId, 0]));
+    room.rpsStats = Object.fromEntries(
+      room.players.map((player) => [
+        player.playerId,
+        { roundsWon: 0, draws: 0, roundsPlayed: 0 },
+      ])
+    );
+    room.rpsRoundHistory = [];
+    room.roundResult = null;
+    startRpsRoundCountdown(room, io);
     return;
   }
 
@@ -469,6 +580,7 @@ export const submitRpsChoice = (
   if (!isRpsChoice(choice) || room.rpsChoices[playerId]) return false;
 
   room.rpsChoices[playerId] = choice;
+  console.log(`RPS choice submitted in room ${room.code}: player ${playerId}, round ${room.currentRound}`);
   broadcastGameState(room, io);
 
   if (room.players.length === 2 && room.players.every((player) => room.rpsChoices[player.playerId])) {
@@ -482,12 +594,12 @@ const startRpsResultCountdown = (room: Room, io: SocketIOServer): void => {
   room.gameStatus = "COUNTDOWN";
   broadcastGameState(room, io);
   let seconds = 3;
-  io.to(room.code).emit("game:countdown", { count: seconds });
+  emitRpsCountdown(room, io, seconds);
 
   const runTick = () => {
     seconds--;
     if (seconds > 0) {
-      io.to(room.code).emit("game:countdown", { count: seconds });
+      emitRpsCountdown(room, io, seconds);
       room.countdownTimer = setTimeout(runTick, 1000);
       return;
     }
@@ -506,15 +618,72 @@ const finishRpsRound = (room: Room, io: SocketIOServer): void => {
   if (!firstChoice || !secondChoice) return;
 
   const winner = getRpsWinner(first.playerId, firstChoice, second.playerId, secondChoice);
-  room.gameStatus = "FINISHED";
-  room.winnerPlayerId = winner;
-  room.winReason = winner === "DRAW" ? "DRAW" : "NORMAL";
-  broadcastGameState(room, io);
-  io.to(room.code).emit("game:finished", {
-    winner: winner === "DRAW" ? "DRAW" : winner,
-    winReason: room.winReason,
-    room: sanitizeRoom(room),
+  const isDraw = winner === "DRAW";
+  const winnerPlayerId = isDraw ? null : winner;
+  room.roundResult = {
+    winnerPlayerId,
+    isDraw,
+    playerChoices: { [first.playerId]: firstChoice, [second.playerId]: secondChoice },
+  };
+  for (const player of room.players) {
+    const stats = room.rpsStats[player.playerId] ?? {
+      roundsWon: 0,
+      draws: 0,
+      roundsPlayed: 0,
+    };
+    stats.roundsPlayed++;
+    if (isDraw) stats.draws++;
+    if (winnerPlayerId === player.playerId) {
+      stats.roundsWon++;
+      room.playerScores[player.playerId] = (room.playerScores[player.playerId] ?? 0) + 1;
+    }
+    room.rpsStats[player.playerId] = stats;
+  }
+  room.rpsRoundHistory.push({
+    round: room.currentRound,
+    playerChoices: { ...room.roundResult.playerChoices },
+    winnerPlayerId,
+    isDraw,
   });
+  room.gameStatus = "FINISHED";
+  room.winnerPlayerId =
+    room.currentRound === room.totalRounds
+      ? getRpsMatchWinner(room)
+      : null;
+  room.winReason = room.currentRound === room.totalRounds
+    ? room.winnerPlayerId === "DRAW" ? "DRAW" : "NORMAL"
+    : null;
+  console.log(`RPS round completed in room ${room.code}: round ${room.currentRound}`);
+  console.log(`RPS score updated in room ${room.code}: ${JSON.stringify(room.playerScores)}`);
+  broadcastGameState(room, io);
+  io.to(room.code).emit("game:round:result", {
+    currentRound: room.currentRound,
+    totalRounds: room.totalRounds,
+    roundResult: room.roundResult,
+    scores: room.playerScores,
+  });
+  if (room.currentRound < room.totalRounds!) {
+    room.rpsTransitionTimer = setTimeout(() => {
+      room.rpsTransitionTimer = undefined;
+      room.currentRound++;
+      startRpsRoundCountdown(room, io);
+    }, RPS_ROUND_TRANSITION_MS);
+  } else {
+    io.to(room.code).emit("game:finished", {
+      winner: room.winnerPlayerId,
+      winReason: room.winReason,
+      room: sanitizeRoom(room),
+    });
+    console.log(`RPS match completed in room ${room.code}`);
+  }
+};
+
+const getRpsMatchWinner = (room: Room): string | "DRAW" => {
+  const [first, second] = room.players;
+  const firstScore = room.playerScores[first.playerId] ?? 0;
+  const secondScore = room.playerScores[second.playerId] ?? 0;
+  if (firstScore === secondScore) return "DRAW";
+  return firstScore > secondScore ? first.playerId : second.playerId;
 };
 
 export const requestRematch = (
@@ -523,6 +692,10 @@ export const requestRematch = (
   io: SocketIOServer
 ): boolean => {
   if (room.gameStatus !== "FINISHED") return false;
+  if (
+    room.gameType === "ROCK_PAPER_SCISSORS" &&
+    room.currentRound !== room.totalRounds
+  ) return false;
 
   // Cannot request if a player has already left
   if (room.players.some((p) => p.left)) return false;
@@ -573,6 +746,9 @@ export const acceptRematch = (
   });
 
   // Start countdown for new game
+  if (room.gameType === "ROCK_PAPER_SCISSORS") {
+    console.log(`RPS rematch started in room ${room.code}`);
+  }
   startCountdown(room, io);
   return true;
 };
@@ -631,6 +807,7 @@ export const leaveRoom = (
   if (room.gameStatus === "COUNTDOWN" || room.gameStatus === "PLAYING") {
     clearTurnTimers(room);
     clearCountdownTimer(room);
+    clearRpsTransitionTimer(room);
 
     const opponent = room.players.find((p) => p.playerId !== playerId);
     room.gameStatus = "FINISHED";
@@ -668,6 +845,7 @@ export const leaveRoom = (
   // If game has already finished: leaving closes room for that player; no rematch for that player
   if (room.gameStatus === "FINISHED") {
     clearRematchTimer(room);
+    clearRpsTransitionTimer(room);
 
     const leavingPlayer = room.players.find((p) => p.playerId === playerId);
     if (leavingPlayer) {
@@ -749,6 +927,7 @@ export const handleDisconnectTimeout = (
   const connectedPlayer = room.players.find((p) => p.connected && !p.left);
   clearTurnTimers(room);
   clearCountdownTimer(room);
+  clearRpsTransitionTimer(room);
   clearRematchTimer(room);
 
   room.gameStatus = "FINISHED";
@@ -835,6 +1014,12 @@ export const deleteRoom = (code: string, io?: SocketIOServer): void => {
   console.log(`Room deleted: ${code}`);
 };
 
+export const deleteAllRooms = (): void => {
+  for (const code of rooms.keys()) {
+    deleteRoom(code);
+  }
+};
+
 // Client-facing Player Information
 export interface ClientPlayerInfo {
   playerId: string;
@@ -863,9 +1048,17 @@ export interface ClientGameState {
     expiresAt: number;
   } | null;
   rps: {
+    totalRounds: number;
+    currentRound: number;
     myChoice: RpsChoice | null;
     opponentChoice: RpsChoice | null;
     opponentHasChosen: boolean;
+    acceptingChoices: boolean;
+    scores: Record<string, number>;
+    stats: Record<string, RpsPlayerStats>;
+    roundResult: RpsRoundResult | null;
+    matchWinnerPlayerId: string | "DRAW" | null;
+    roundHistory: RpsRoundHistoryEntry[];
   } | null;
 }
 
@@ -882,7 +1075,7 @@ export const getClientGameState = (room: Room, viewerPlayerId?: string): ClientG
     code: room.code,
     gameType: room.gameType,
     gameStatus: room.gameStatus,
-    board: room.board,
+    board: [...room.board],
     players,
     currentTurn: room.currentTurn,
     winner: room.winnerPlayerId || null,
@@ -901,13 +1094,15 @@ export const getClientGameState = (room: Room, viewerPlayerId?: string): ClientG
     rps:
       room.gameType === "ROCK_PAPER_SCISSORS"
         ? {
+            totalRounds: room.totalRounds!,
+            currentRound: room.currentRound,
             myChoice: viewerPlayerId ? room.rpsChoices[viewerPlayerId] ?? null : null,
             opponentChoice: (() => {
               const opponent = viewerPlayerId
                 ? room.players.find((player) => player.playerId !== viewerPlayerId)
                 : undefined;
-              return room.gameStatus === "FINISHED" && opponent
-                ? room.rpsChoices[opponent.playerId] ?? null
+              return room.roundResult && opponent
+                ? room.roundResult.playerChoices[opponent.playerId] ?? null
                 : null;
             })(),
             opponentHasChosen: viewerPlayerId
@@ -917,6 +1112,26 @@ export const getClientGameState = (room: Room, viewerPlayerId?: string): ClientG
                     Boolean(room.rpsChoices[player.playerId])
                 )
               : false,
+            acceptingChoices: room.gameStatus === "PLAYING",
+            scores: { ...room.playerScores },
+            stats: Object.fromEntries(
+              Object.entries(room.rpsStats).map(([playerId, stats]) => [
+                playerId,
+                { ...stats },
+              ])
+            ),
+            roundResult: room.roundResult
+              ? {
+                  ...room.roundResult,
+                  playerChoices: { ...room.roundResult.playerChoices },
+                }
+              : null,
+            matchWinnerPlayerId:
+              room.currentRound === room.totalRounds ? room.winnerPlayerId ?? null : null,
+            roundHistory: room.rpsRoundHistory.map((entry) => ({
+              ...entry,
+              playerChoices: { ...entry.playerChoices },
+            })),
           }
         : null,
   };
@@ -960,6 +1175,16 @@ export const sanitizeRoom = (room: Room) => {
   return {
     ...safeRoom,
     players: safePlayers,
+    rpsStats: Object.fromEntries(
+      Object.entries(room.rpsStats).map(([playerId, stats]) => [
+        playerId,
+        {
+          displayName: room.players.find((player) => player.playerId === playerId)?.displayName,
+          ...stats,
+          finalScore: room.playerScores[playerId] ?? 0,
+        },
+      ])
+    ),
     rematch: safeRematch,
   };
 };
